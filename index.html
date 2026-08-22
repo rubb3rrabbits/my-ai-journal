@@ -8,15 +8,25 @@
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-4 max-w-md mx-auto font-sans">
 
-  <header class="py-4 border-b border-slate-800">
+  <header class="py-4 border-b border-slate-800 flex justify-between items-center">
     <h1 class="text-xl font-bold text-indigo-400">My AI Journal</h1>
+    <button onclick="clearHistory()" class="text-xs text-slate-500 underline">Clear Memory</button>
   </header>
 
   <!-- API KEY INPUT -->
   <section class="my-4 bg-slate-800 p-3 rounded-lg">
     <label class="block text-xs text-slate-400 mb-1">Google Gemini API Key</label>
-    <input type="password" id="apiKey" placeholder="Paste your key here" 
+    <input type="password" id="apiKey" placeholder="Paste your AQ. key here" 
            class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200">
+  </section>
+
+  <!-- ADAPTIVE DAILY PROMPT -->
+  <section class="my-3 bg-indigo-950/40 border border-indigo-800/50 p-4 rounded-xl">
+    <div class="flex justify-between items-center mb-1">
+      <span class="text-xs font-semibold text-indigo-400 uppercase tracking-wider">Tailored Prompt</span>
+      <button onclick="generatePrompt()" class="text-xs text-indigo-300 hover:text-white">↻ Refresh</button>
+    </div>
+    <p id="promptText" class="text-sm italic text-slate-300">Tap refresh to generate a custom prompt based on your journal history...</p>
   </section>
 
   <!-- JOURNAL ENTRY BOX -->
@@ -26,52 +36,53 @@
     
     <button onclick="submitEntry()" id="submitBtn" 
             class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 rounded-xl transition-all">
-      Analyze & Get Feedback
+      Analyze & Save Entry
     </button>
   </main>
 
-  <!-- FEEDBACK BOX -->
+  <!-- AI FEEDBACK DISPLAY -->
   <section id="feedbackArea" class="hidden my-4 bg-slate-800 p-4 rounded-xl border border-slate-700">
-    <h3 class="text-sm font-semibold text-indigo-400 mb-2">AI Feedback</h3>
+    <h3 class="text-sm font-semibold text-indigo-400 mb-2">AI Feedback & Reflection</h3>
     <div id="feedbackContent" class="text-sm text-slate-300 leading-relaxed space-y-2"></div>
   </section>
 
   <script>
-    // Rosebud-style journaling persona prompt
     const SYSTEM_INSTRUCTION = `You are an empathetic, insightful personal AI journal coach modeled after reflective journaling partners.
-Your job is to read the user's journal entry, validate their feelings, identify patterns or habits, and offer 1-2 thoughtful follow-up questions.
+Your job is to read the user's current journal entry while taking into account their past entries to notice habits, trends, and growth over time.
 
 Format:
-1. Reflection & Validation (2-3 sentences)
-2. Patterns or Habits Observed (bullet points)
-3. Deepening Question (1 follow-up question)`;
+1. Reflection & Validation (2-3 sentences acknowledging thoughts/feelings)
+2. Patterns & Trends Observed (bullet points connecting past entries to today)
+3. Deepening Question (1 thoughtful follow-up question)`;
 
-    // Auto-load saved API key from phone storage
+    // Auto-load API Key
     document.getElementById('apiKey').value = localStorage.getItem('gemini_journal_key') || '';
-    
-    // Save key to phone storage whenever it changes
     document.getElementById('apiKey').addEventListener('input', (e) => {
       localStorage.setItem('gemini_journal_key', e.target.value.trim());
     });
+
+    // Fetch saved entry history from phone memory
+    function getHistory() {
+      return JSON.parse(localStorage.getItem('journal_history') || '[]');
+    }
 
     async function submitEntry() {
       const apiKey = document.getElementById('apiKey').value.trim();
       const text = document.getElementById('entryText').value.trim();
 
-      if (!apiKey) {
-        alert('Please paste your Gemini API key!');
-        return;
-      }
-      if (!text) {
-        alert('Please write a journal entry first!');
+      if (!apiKey || !text) {
+        alert('Please enter your API key and write an entry!');
         return;
       }
 
       const btn = document.getElementById('submitBtn');
-      btn.innerText = 'Analyzing with Gemini...';
+      btn.innerText = 'Analyzing with Memory...';
       btn.disabled = true;
 
-      // Gemini API endpoint URL
+      // Get recent history to pass as context
+      const history = getHistory();
+      const recentHistoryText = history.slice(-3).map(e => `[${e.date}]: ${e.text}`).join('\n');
+
       const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
 
       try {
@@ -79,39 +90,77 @@ Format:
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
-            // Passing the key in this custom header supports AQ. Auth keys
             'x-goog-api-key': apiKey 
           },
           body: JSON.stringify({
-            system_instruction: {
-              parts: [{ text: SYSTEM_INSTRUCTION }]
-            },
-            contents: [
-              {
-                parts: [{ text: `Journal Entry:\n${text}` }]
-              }
-            ]
+            system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+            contents: [{
+              parts: [{ 
+                text: `Past Recent Entries:\n${recentHistoryText || 'None yet'}\n\nToday's Entry:\n${text}` 
+              }]
+            }]
           })
         });
 
         const data = await response.json();
-
-        // Handle API errors cleanly
-        if (data.error) {
-          throw new Error(data.error.message);
-        }
+        if (data.error) throw new Error(data.error.message);
 
         const aiResponse = data.candidates[0].content.parts[0].text;
 
-        // Render feedback formatted with line breaks
+        // Save entry and feedback into local memory
+        history.push({ date: new Date().toLocaleDateString(), text: text, feedback: aiResponse });
+        localStorage.setItem('journal_history', JSON.stringify(history));
+
+        // Render response and clear text area
         document.getElementById('feedbackContent').innerHTML = aiResponse.replace(/\n/g, '<br>');
         document.getElementById('feedbackArea').classList.remove('hidden');
+        document.getElementById('entryText').value = '';
       } catch (error) {
-        console.error(error);
         alert('Error: ' + error.message);
       } finally {
-        btn.innerText = 'Analyze & Get Feedback';
+        btn.innerText = 'Analyze & Save Entry';
         btn.disabled = false;
+      }
+    }
+
+    async function generatePrompt() {
+      const apiKey = document.getElementById('apiKey').value.trim();
+      if (!apiKey) return alert('Please enter your API key first!');
+
+      const promptText = document.getElementById('promptText');
+      promptText.innerText = 'Generating tailored prompt based on history...';
+
+      const history = getHistory();
+      const recentHistoryText = history.slice(-5).map(e => `[${e.date}]: ${e.text}`).join('\n');
+
+      const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{ 
+                text: `Based on the following past journal entries, generate a single, deeply thoughtful 1-sentence prompt for today:\n${recentHistoryText || 'No prior history. Generate a general reflective prompt.'}` 
+              }]
+            }]
+          })
+        });
+
+        const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
+
+        promptText.innerText = `"${data.candidates[0].content.parts[0].text.trim()}"`;
+      } catch (error) {
+        promptText.innerText = 'Could not generate prompt. Write an entry first!';
+      }
+    }
+
+    function clearHistory() {
+      if (confirm('Are you sure you want to clear your local journal memory?')) {
+        localStorage.removeItem('journal_history');
+        alert('Memory cleared!');
       }
     }
   </script>
